@@ -154,19 +154,20 @@ class CR_Admin {
 
     public static function set_custom_edit_redirect_link_columns($columns) {
         unset($columns['date']); 
-        return [
+        $new_columns = [
             'cb'              => $columns['cb'],
             'title'           => 'Nome do Link',
-            'redirect_url'    => 'URL Gerada',
-            'destination_url' => 'URL de Destino',
             'cr_origin'       => 'Origens',
             'cr_campaign'     => 'Campanhas',
+            'redirect_url'    => 'URL Gerada',
+            'destination_url' => 'URL de Destino',
             'link_notes'      => 'Notas Internas',
             'clicks'          => 'Acessos (Hoje / Ontem / Total)',
             'status'          => 'Status',
             'publish_date'    => 'Data',
             'actions'         => 'Ações',
         ];
+        return $new_columns;
     }
 
     public static function custom_redirect_link_column($column, $post_id) {

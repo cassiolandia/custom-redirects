@@ -15,7 +15,7 @@ class CR_CPT {
         $labels = [
             'name'          => 'Links de Redirecionamento',
             'singular_name' => 'Link',
-            'menu_name'     => 'Redirecionamentos',
+            'menu_name'     => 'Links',
             'add_new_item'  => 'Adicionar Novo Link',
             'add_new'       => 'Adicionar Novo',
             'edit_item'     => 'Editar Link',
