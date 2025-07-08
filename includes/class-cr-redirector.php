@@ -3,6 +3,9 @@
 class CR_Redirector {
 
     public static function init() {
+        if (is_admin()) {
+            return;
+        }
         add_action('init', [self::class, 'add_rewrite_rules']);
         add_filter('query_vars', [self::class, 'add_query_vars']);
         add_action('parse_request', [self::class, 'process_redirect_performant'], 10, 1);
@@ -151,14 +154,14 @@ class CR_Redirector {
         // Final decision based on the calculated score.
         $final_score = $human_score - $penalty_score;
         $has_browser_signature = (bool)preg_match($patterns_cache['browser'], $userAgent);
-        $threshold = $has_browser_signature ? 60 : 90;
+        $threshold = $has_browser_signature ? 50 : 85;
 
         if ($final_score < $threshold) {
             return true;
         }
         
         // A request with a browser signature should have a reasonably high score.
-        if ($has_browser_signature && $final_score < 80) {
+        if ($has_browser_signature && $final_score < 70) {
             return true;
         }
 
@@ -233,10 +236,6 @@ class CR_Redirector {
             return true;
         }
 
-        if (!preg_match('/\([^)]+\)/', $_SERVER['HTTP_USER_AGENT'] ?? '')) {
-            return true;
-        }
-
         return false;
     }
 
@@ -299,15 +298,15 @@ class CR_Redirector {
             $ch_has_edge = str_contains($client_hints, 'edge');
 
             if ($ua_has_chrome != $ch_has_chrome) {
-                $penalty_score += 50;
+                $penalty_score += 35;
             }
             
             if ($ua_has_edge != $ch_has_edge) {
-                $penalty_score += 40;
+                $penalty_score += 30;
             }
 
             if ($ua_has_chrome && $ch_has_chrome) {
-                $human_score += 10;
+                $human_score += 15;
             }
         }
     }
@@ -322,6 +321,10 @@ class CR_Redirector {
             if (str_contains($lowerUA, 'mozilla') && str_contains($lowerUA, 'webkit')) {
                 $human_score += 10;
             }
+        }
+
+        if (!preg_match($patterns['parentheses'], $userAgent)) {
+            $penalty_score += 20;
         }
 
         if ($userAgent_len < 60) $penalty_score += 25;
