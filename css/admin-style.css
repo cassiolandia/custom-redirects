@@ -1,0 +1,25 @@
+/* Custom styles for the redirect links admin page */
+.cr-suggested-slug {
+    background: #f0f0f1;
+    padding: 5px 10px;
+    border-radius: 3px;
+    font-family: monospace;
+    display: inline-block;
+    border: 1px solid #ddd;
+}
+
+.cr-copy-button {
+    cursor: pointer;
+    color: #0073aa;
+    vertical-align: middle;
+    margin-left: 5px;
+}
+
+.cr-copy-button:hover {
+    color: #00a0d2;
+}
+
+.cr-copy-button.copied {
+    color: #46b450;
+    cursor: default;
+}

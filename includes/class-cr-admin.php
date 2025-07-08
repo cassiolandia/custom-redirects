@@ -121,7 +121,8 @@ class CR_Admin {
         $allowed_hooks = ['edit.php', 'post.php', 'post-new.php'];
 
         if (in_array($hook_suffix, $allowed_hooks) && 'redirect_link' === $screen->post_type) {
-            wp_enqueue_script('cr-admin-logic', plugin_dir_url(__FILE__) . '../js/admin-scripts.js', ['jquery'], '1.0.0', true);
+            wp_enqueue_script('cr-admin-logic', plugin_dir_url(__FILE__) . '../js/admin-scripts.js', ['jquery', 'postbox'], '1.0.0', true);
+            wp_enqueue_style('cr-admin-style', plugin_dir_url(__FILE__) . '../css/admin-style.css');
         }
     }
 
@@ -158,6 +159,7 @@ class CR_Admin {
             'title'           => 'Nome do Link',
             'redirect_url'    => 'URL Gerada',
             'destination_url' => 'URL de Destino',
+            'cr_origin'       => 'Origens',
             'link_notes'      => 'Notas Internas',
             'clicks'          => 'Acessos (Hoje / Ontem / Total)',
             'status'          => 'Status',
@@ -180,7 +182,23 @@ class CR_Admin {
                 }
                 break;
 
-            case 'destination_url':
+            case 'cr_origin':
+            $terms = get_the_terms($post_id, 'cr_origin');
+            if (!empty($terms)) {
+                $origin_links = [];
+                foreach ($terms as $term) {
+                    $origin_links[] = sprintf('<a href="%s">%s</a>', 
+                        esc_url(admin_url('edit.php?post_type=redirect_link&cr_origin=' . $term->slug)),
+                        esc_html($term->name)
+                    );
+                }
+                echo implode(', ', $origin_links);
+            } else {
+                echo '<em>—</em>';
+            }
+            break;
+
+        case 'destination_url':
                 $url = get_post_meta($post_id, '_destination_url', true);
                 if ($url) {
                     echo '<a href="' . esc_url($url) . '" target="_blank" rel="noopener" title="' . esc_attr($url) . '">' . esc_html($url) . '</a>
