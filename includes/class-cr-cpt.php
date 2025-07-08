@@ -4,8 +4,8 @@ class CR_CPT {
 
     public static function init() {
         add_action('init', [self::class, 'register_redirect_link_cpt']);
-        add_action('init', [self::class, 'register_origin_taxonomy']);
         add_action('init', [self::class, 'register_campaign_taxonomy']);
+        add_action('init', [self::class, 'register_origin_taxonomy']);
     }
 
     /**

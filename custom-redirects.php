@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Redirecionador Customizado com Rastreamento
  * Description:       Cria URLs personalizadas no formato /go/[slug] que redirecionam para um destino e rastreiam os cliques diários, com detecção de bots.
- * Version:           2.1.0
+ * Version:           3.0
  * Author:            Seu Nome (Revisado por Especialista)
  */
 
