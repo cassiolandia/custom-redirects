@@ -5,6 +5,7 @@ class CR_CPT {
     public static function init() {
         add_action('init', [self::class, 'register_redirect_link_cpt']);
         add_action('init', [self::class, 'register_origin_taxonomy']);
+        add_action('init', [self::class, 'register_campaign_taxonomy']);
     }
 
     /**
@@ -31,7 +32,7 @@ class CR_CPT {
             'hierarchical'    => false,
             'supports'        => ['title'],
             'rewrite'         => false,
-            'taxonomies'      => ['cr_origin'], // Associate taxonomy
+            'taxonomies'      => ['cr_origin', 'cr_campaign'], // Associate taxonomies
         ];
         register_post_type('redirect_link', $args);
     }
@@ -63,5 +64,34 @@ class CR_CPT {
         ];
 
         register_taxonomy('cr_origin', ['redirect_link'], $args);
+    }
+
+    /**
+     * Registers the 'Campaign' taxonomy.
+     */
+    public static function register_campaign_taxonomy() {
+        $labels = [
+            'name'              => 'Campanhas',
+            'singular_name'     => 'Campanha',
+            'search_items'      => 'Procurar Campanhas',
+            'all_items'         => 'Todas as Campanhas',
+            'edit_item'         => 'Editar Campanha',
+            'update_item'       => 'Atualizar Campanha',
+            'add_new_item'      => 'Adicionar Nova Campanha',
+            'new_item_name'     => 'Nome da Nova Campanha',
+            'menu_name'         => 'Campanhas',
+        ];
+
+        $args = [
+            'hierarchical'      => false, // Behaves like tags (autocomplete)
+            'labels'            => $labels,
+            'show_ui'           => true,
+            'show_admin_column' => false, // We will create a custom column
+            'query_var'         => true,
+            'rewrite'           => ['slug' => 'campanha'],
+            'show_in_rest'      => true,
+        ];
+
+        register_taxonomy('cr_campaign', ['redirect_link'], $args);
     }
 }

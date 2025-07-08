@@ -160,6 +160,7 @@ class CR_Admin {
             'redirect_url'    => 'URL Gerada',
             'destination_url' => 'URL de Destino',
             'cr_origin'       => 'Origens',
+            'cr_campaign'     => 'Campanhas',
             'link_notes'      => 'Notas Internas',
             'clicks'          => 'Acessos (Hoje / Ontem / Total)',
             'status'          => 'Status',
@@ -182,7 +183,23 @@ class CR_Admin {
                 }
                 break;
 
-            case 'cr_origin':
+            case 'cr_campaign':
+            $terms = get_the_terms($post_id, 'cr_campaign');
+            if (!empty($terms)) {
+                $campaign_links = [];
+                foreach ($terms as $term) {
+                    $campaign_links[] = sprintf('<a href="%s">%s</a>', 
+                        esc_url(admin_url('edit.php?post_type=redirect_link&cr_campaign=' . $term->slug)),
+                        esc_html($term->name)
+                    );
+                }
+                echo implode(', ', $campaign_links);
+            } else {
+                echo '<em>—</em>';
+            }
+            break;
+
+        case 'cr_origin':
             $terms = get_the_terms($post_id, 'cr_origin');
             if (!empty($terms)) {
                 $origin_links = [];
