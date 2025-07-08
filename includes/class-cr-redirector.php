@@ -115,150 +115,139 @@ class CR_Redirector {
     }
 
     public static function is_bot(): bool {
-        static $patterns_cache = null;
-        static $log_file = null;
-        
-        if ($patterns_cache === null) {
-            $patterns_cache = [
-                'wordpress' => '/^(wordpress|jetpack|wp-rocket|wp-optimize|wp-cron)\/i',
-                'social' => '/\b(whatsapp|facebookexternalhit|facebookcatalog|facebot|instagram|discordbot|linkedinbot|twitterbot|pinterest|skypeuripreview|slackbot-linkexpanding|telegrambot|redditbot|vkshare|line|kakaotalk|wechat)\b/i',
-                'browser' => '/\b(mozilla.*webkit|chrome\/[\d.]+|firefox\/[\d.]+|safari\/[\d.]+|edge\/[\d.]+|opera\/[\d.]+)\b/i',
-                'suspicious' => '/\b(headless|automation|webdriver|test|check|scan|monitor)\b|^[a-z]+\/[\d.]+$|\b(api|sdk|client|lib)\s*[\d.]*$/i',
-                'chrome_version' => '/chrome\/(\d+)/i',
-                'parentheses' => '/\([^)]+\)/',
-                'bot_mega' => '/\b(googlebot|bingbot|yandexbot|baiduspider|slurp|duckduckbot|applebot|seznam|nutch|petalbot|sogou|exabot|gptbot|claude-web|openai|anthropic-ai|perplexity|ccbot|bytespider|chatgpt-user|bard|gemini-pro|python-requests|python-urllib|go-http-client|node-fetch|axios|guzzle|httpclient|postman|insomnia|httpie|selenium|puppeteer|playwright|phantomjs|headlesschrome|webdriver|chromedriver|cypress|scrapy|ahrefs|semrush|mj12bot|screaming frog|moz\.com|pingdom|uptimerobot|statuscake)\b/i'
-            ];
-            
-            $log_file = WP_CONTENT_DIR . '/cr-bot-detection.log';
+        // Initial, non-UA checks that are fast and definitive.
+        if (self::is_system_request() || self::is_automation_request()) {
+            return true;
         }
-        
-        $log_data = [
-            'timestamp' => date('Y-m-d H:i:s'),
-            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-            'ua' => substr($_SERVER['HTTP_USER_AGENT'] ?? 'empty', 0, 120),
-            'method' => $_SERVER['REQUEST_METHOD'] ?? 'unknown',
-            'referer' => isset($_SERVER['HTTP_REFERER']) ? 'yes' : 'no'
-        ];
-        
-        $write_log = function($result, $reason, $score = null) use ($log_file, $log_data) {
-            $dir = dirname($log_file);
-            if (!is_dir($dir)) {
-                wp_mkdir_p($dir);
-            }
-            
-            if (!is_writable($dir)) {
-                error_log("CR Bot Detection: Cannot write to {$dir}");
-                return;
-            }
-            
-            $log_entry = "{$log_data['timestamp']} | " .
-                        ($result ? 'BOT' : 'HUMAN') . " | {$reason}" .
-                        ($score !== null ? " | Score: {$score}" : '') .
-                        " | IP: {$log_data['ip']} | Ref: {$log_data['referer']} | UA: {$log_data['ua']}\n";
-            
-            $written = @file_put_contents($log_file, $log_entry, FILE_APPEND | LOCK_EX);
-            
-            if ($written === false) {
-                error_log("CR Bot Detection: {$log_entry}");
-            }
-        };
 
-        if ((defined('DOING_CRON') && DOING_CRON) || 
-            php_sapi_name() === 'cli' || 
-            (defined('WP_CLI') && WP_CLI)) {
-            $write_log(true, 'System context');
+        // Basic request validation. This also handles some suspicious headers.
+        if (self::is_invalid_basic_request()) {
+            return true;
+        }
+
+        // Pre-emptive checks based on User Agent patterns.
+        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        $lowerUA = strtolower($userAgent);
+        static $patterns_cache = null;
+        self::initialize_patterns($patterns_cache);
+
+        // Allow WordPress and Social bots for previews, etc. They are not human, but we want to allow them.
+        if (preg_match($patterns_cache['wordpress'], $userAgent) || preg_match($patterns_cache['social'], $lowerUA)) {
+            return false;
+        }
+
+        // Block known malicious/automation bots immediately based on UA.
+        if (preg_match($patterns_cache['bot_mega'], $lowerUA) || preg_match($patterns_cache['suspicious'], $userAgent)) {
+            return true;
+        }
+
+        // For more ambiguous cases, we use a scoring system.
+        $human_score = 0;
+        $penalty_score = 0;
+
+        self::score_headers($human_score, $penalty_score, $lowerUA);
+        self::score_user_agent($human_score, $penalty_score, $userAgent, $lowerUA, $patterns_cache);
+
+        // Final decision based on the calculated score.
+        $final_score = $human_score - $penalty_score;
+        $has_browser_signature = (bool)preg_match($patterns_cache['browser'], $userAgent);
+        $threshold = $has_browser_signature ? 60 : 90;
+
+        if ($final_score < $threshold) {
             return true;
         }
         
-        if (defined('DOING_AJAX') && DOING_AJAX) {
-            $referer = $_SERVER['HTTP_REFERER'] ?? '';
-            $host = $_SERVER['HTTP_HOST'] ?? '';
-            if (!$referer || !str_contains($referer, $host)) {
-                $write_log(true, 'AJAX no referer');
-                return true;
-            }
+        // A request with a browser signature should have a reasonably high score.
+        if ($has_browser_signature && $final_score < 80) {
+            return true;
         }
 
+        return false;
+    }
+
+    private static function initialize_patterns(&$patterns_cache) {
+        if ($patterns_cache !== null) {
+            return;
+        }
+        $patterns_cache = [
+            'wordpress' => '/^(wordpress|jetpack|wp-rocket|wp-optimize|wp-cron)\/i',
+            'social' => '/\b(whatsapp|facebookexternalhit|facebookcatalog|facebot|instagram|discordbot|linkedinbot|twitterbot|pinterest|skypeuripreview|slackbot-linkexpanding|telegrambot|redditbot|vkshare|line|kakaotalk|wechat)\b/i',
+            'browser' => '/\b(mozilla.*webkit|chrome\/[\d.]+|firefox\/[\d.]+|safari\/[\d.]+|edge\/[\d.]+|opera\/[\d.]+)\b/i',
+            'suspicious' => '/\b(headless|automation|webdriver|test|check|scan|monitor)\b|^[a-z]+\/[\d.]+$|\b(api|sdk|client|lib)\s*[\d.]*$/i',
+            'chrome_version' => '/chrome\/(\d+)/i',
+            'parentheses' => '/\([^)]+\)/',
+            'bot_mega' => '/\b(googlebot|bingbot|yandexbot|baiduspider|slurp|duckduckbot|applebot|seznam|nutch|petalbot|sogou|exabot|gptbot|claude-web|openai|anthropic-ai|perplexity|ccbot|bytespider|chatgpt-user|bard|gemini-pro|python-requests|python-urllib|go-http-client|node-fetch|axios|guzzle|httpclient|postman|insomnia|httpie|selenium|puppeteer|playwright|phantomjs|headlesschrome|webdriver|chromedriver|cypress|scrapy|ahrefs|semrush|mj12bot|screaming frog|moz\.com|pingdom|uptimerobot|statuscake)\b/i'
+        ];
+    }
+
+    private static function is_system_request(): bool {
+        return (defined('DOING_CRON') && DOING_CRON) ||
+            php_sapi_name() === 'cli' ||
+            (defined('WP_CLI') && WP_CLI);
+    }
+
+    private static function is_automation_request(): bool {
         static $automation_headers = [
             'HTTP_X_AUTOMATION' => 1, 'HTTP_X_SELENIUM' => 1, 'HTTP_X_WEBDRIVER' => 1,
             'HTTP_WEBDRIVER' => 1, 'HTTP_X_PUPPETEER' => 1, 'HTTP_X_PLAYWRIGHT' => 1
         ];
-        
-        if (array_intersect_key($_SERVER, $automation_headers)) {
-            $write_log(true, 'Automation header');
-            return true;
-        }
+        return (bool)array_intersect_key($_SERVER, $automation_headers);
+    }
 
-        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-        $userAgent_len = strlen($userAgent);
-        
-        if ($userAgent_len < 15 || $userAgent_len > 2000) {
-            $write_log(true, "Invalid UA length: {$userAgent_len}");
-            return true;
-        }
-        
-        $lowerUA = strtolower($userAgent);
-
-        if (preg_match($patterns_cache['wordpress'], $userAgent)) {
-            $write_log(false, 'WordPress tool');
-            return false;
-        }
-        
-        if (preg_match($patterns_cache['social'], $lowerUA)) {
-            $write_log(false, 'Social bot');
-            return false;
-        }
-
-        if (preg_match($patterns_cache['bot_mega'], $lowerUA)) {
-            $write_log(true, 'Known bot');
-            return true;
+    private static function is_invalid_basic_request(): bool {
+        if (defined('DOING_AJAX') && DOING_AJAX) {
+            $referer = $_SERVER['HTTP_REFERER'] ?? '';
+            $host = $_SERVER['HTTP_HOST'] ?? '';
+            if (!$referer || !str_contains($referer, $host)) {
+                return true;
+            }
         }
 
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
-            $write_log(true, 'Non-GET method');
+            return true;
+        }
+
+        $userAgent_len = strlen($_SERVER['HTTP_USER_AGENT'] ?? '');
+        if ($userAgent_len < 15 || $userAgent_len > 2000) {
             return true;
         }
 
         $required_headers = ['HTTP_ACCEPT', 'HTTP_ACCEPT_LANGUAGE', 'HTTP_ACCEPT_ENCODING'];
         foreach ($required_headers as $header) {
             if (!isset($_SERVER[$header])) {
-                $write_log(true, "Missing required header: {$header}");
                 return true;
             }
         }
         
-        $suspicious_headers = [
-            'HTTP_CONNECTION' => 'close',
-            'HTTP_ACCEPT' => '*/*',
-            'HTTP_ACCEPT' => 'application/json',
-            'HTTP_ACCEPT' => 'text/plain'
-        ];
-        
-        foreach ($suspicious_headers as $header => $suspicious_value) {
-            if (isset($_SERVER[$header]) && $_SERVER[$header] === $suspicious_value) {
-                $write_log(true, "Suspicious header value: {$header}={$suspicious_value}");
-                return true;
-            }
+        if (isset($_SERVER['HTTP_CONNECTION']) && $_SERVER['HTTP_CONNECTION'] === 'close') {
+            return true;
+        }
+
+        $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+        $forbidden_accepts = ['*/*', 'application/json', 'text/plain', 'text/*', 'image/*'];
+        if (in_array(trim($accept), $forbidden_accepts, true)) {
+            return true;
         }
         
+        if (substr_count($accept, ',') < 2) {
+            return true;
+        }
+
+        if (!preg_match('/\([^)]+\)/', $_SERVER['HTTP_USER_AGENT'] ?? '')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function score_headers(&$human_score, &$penalty_score, $lowerUA) {
         static $essential_headers = [
-            'HTTP_ACCEPT' => 18,
-            'HTTP_ACCEPT_LANGUAGE' => 15,
-            'HTTP_ACCEPT_ENCODING' => 12,
-            'HTTP_SEC_FETCH_SITE' => 20,
-            'HTTP_SEC_FETCH_MODE' => 15,
-            'HTTP_SEC_FETCH_DEST' => 12,
-            'HTTP_UPGRADE_INSECURE_REQUESTS' => 15,
-            'HTTP_SEC_CH_UA' => 18,
-            'HTTP_SEC_CH_UA_MOBILE' => 10,
-            'HTTP_DNT' => 5,
-            'HTTP_CACHE_CONTROL' => 8,
-            'HTTP_SEC_FETCH_USER' => 12
+            'HTTP_ACCEPT' => 18, 'HTTP_ACCEPT_LANGUAGE' => 15, 'HTTP_ACCEPT_ENCODING' => 12,
+            'HTTP_SEC_FETCH_SITE' => 20, 'HTTP_SEC_FETCH_MODE' => 15, 'HTTP_SEC_FETCH_DEST' => 12,
+            'HTTP_UPGRADE_INSECURE_REQUESTS' => 15, 'HTTP_SEC_CH_UA' => 18, 'HTTP_SEC_CH_UA_MOBILE' => 10,
+            'HTTP_DNT' => 5, 'HTTP_CACHE_CONTROL' => 8, 'HTTP_SEC_FETCH_USER' => 12
         ];
-        
-        $human_score = 0;
-        $penalty_score = 0;
-        
+
         foreach ($essential_headers as $header => $score) {
             if (isset($_SERVER[$header])) {
                 $human_score += $score;
@@ -269,119 +258,90 @@ class CR_Redirector {
 
         if (isset($_SERVER['HTTP_ACCEPT'])) {
             $accept = $_SERVER['HTTP_ACCEPT'];
-            
-            $forbidden_accepts = ['*/*', 'application/json', 'text/plain', 'text/*', 'image/*'];
-            if (in_array(trim($accept), $forbidden_accepts, true)) {
-                $write_log(true, "Forbidden accept: {$accept}");
-                return true;
-            }
-            
-            if (substr_count($accept, ',') < 2) {
-                $write_log(true, "Too simple accept header");
-                return true;
-            }
-            
-            if (!str_starts_with($accept, 'text/html')) {
-                $penalty_score += 25;
-            }
+            if (!str_starts_with($accept, 'text/html')) $penalty_score += 25;
             
             $score_map = [
-                'text/html' => 15,
-                'application/xhtml+xml' => 12,
-                'image/webp' => 10,
-                'image/avif' => 8,
-                'image/apng' => 6,
-                'application/signed-exchange' => 5
+                'text/html' => 15, 'application/xhtml+xml' => 12, 'image/webp' => 10,
+                'image/avif' => 8, 'image/apng' => 6, 'application/signed-exchange' => 5
             ];
-            
             foreach ($score_map as $type => $score) {
-                if (str_contains($accept, $type)) {
-                    $human_score += $score;
-                }
+                if (str_contains($accept, $type)) $human_score += $score;
             }
-            
-            if (str_contains($accept, 'q=')) {
-                $human_score += 10;
-            }
+            if (str_contains($accept, 'q=')) $human_score += 10;
         }
-        
+
         if (isset($_SERVER['HTTP_ACCEPT_LANGUAGE'])) {
             $lang = $_SERVER['HTTP_ACCEPT_LANGUAGE'];
-            
-            if (!str_contains($lang, ',') && !str_contains($lang, '-')) {
-                $penalty_score += 20;
-            }
-            
+            if (!str_contains($lang, ',') && !str_contains($lang, '-')) $penalty_score += 20;
+            if (preg_match('/^(en|pt|es|fr|de|ja|zh)$/i', trim($lang))) $penalty_score += 25;
             if (str_contains($lang, ',')) $human_score += 12;
             if (str_contains($lang, 'q=')) $human_score += 8;
-            
-            if (preg_match('/^(en|pt|es|fr|de|ja|zh)$/i', trim($lang))) {
-                $penalty_score += 25;
-            }
         }
-        
+
         if (isset($_SERVER['HTTP_ACCEPT_ENCODING'])) {
             $encoding = $_SERVER['HTTP_ACCEPT_ENCODING'];
-            
-            if (!str_contains($encoding, 'gzip')) {
-                $penalty_score += 20;
-            }
-            
+            if (!str_contains($encoding, 'gzip')) $penalty_score += 20;
             if (str_contains($encoding, 'br')) $human_score += 8;
             if (str_contains($encoding, 'deflate')) $human_score += 5;
         }
 
-        $has_browser_signature = (bool)preg_match($patterns_cache['browser'], $userAgent);
-        if ($has_browser_signature) {
-            $human_score += 20;
+        if (isset($_SERVER['HTTP_SEC_CH_UA'])) {
+            $client_hints = strtolower($_SERVER['HTTP_SEC_CH_UA']);
+
+            if (str_contains($client_hints, 'headless')) {
+                $penalty_score += 100;
+            }
+
+            $ua_has_chrome = str_contains($lowerUA, 'chrome');
+            $ch_has_chrome = str_contains($client_hints, 'chrome') || str_contains($client_hints, 'chromium');
             
+            $ua_has_edge = str_contains($lowerUA, 'edge');
+            $ch_has_edge = str_contains($client_hints, 'edge');
+
+            if ($ua_has_chrome != $ch_has_chrome) {
+                $penalty_score += 50;
+            }
+            
+            if ($ua_has_edge != $ch_has_edge) {
+                $penalty_score += 40;
+            }
+
+            if ($ua_has_chrome && $ch_has_chrome) {
+                $human_score += 10;
+            }
+        }
+    }
+
+    private static function score_user_agent(&$human_score, &$penalty_score, $userAgent, $lowerUA, $patterns) {
+        $userAgent_len = strlen($userAgent);
+
+        if (!preg_match($patterns['browser'], $userAgent)) {
+            $penalty_score += 40;
+        } else {
+            $human_score += 20;
             if (str_contains($lowerUA, 'mozilla') && str_contains($lowerUA, 'webkit')) {
                 $human_score += 10;
             }
-        } else {
-            $penalty_score += 40;
         }
-        
-        if (!preg_match($patterns_cache['parentheses'], $userAgent)) {
-            $write_log(true, 'No parentheses in UA');
-            return true;
-        }
-        
-        if ($userAgent_len < 60) {
-            $penalty_score += 25;
-        }
-        
-        if ($userAgent_len > 1000) {
-            $penalty_score += 15;
-        }
-        
-        $required_tokens = 0;
+
+        if ($userAgent_len < 60) $penalty_score += 25;
+        if ($userAgent_len > 1000) $penalty_score += 15;
+
         $browser_tokens = ['mozilla', 'webkit', 'chrome', 'safari', 'firefox', 'edge'];
-        
+        $required_tokens = 0;
         foreach ($browser_tokens as $token) {
-            if (str_contains($lowerUA, $token)) {
-                $required_tokens++;
-            }
+            if (str_contains($lowerUA, $token)) $required_tokens++;
         }
-        
-        if ($required_tokens < 2) {
-            $penalty_score += 30;
-        }
-        
-        if (str_contains($lowerUA, 'chrome') && preg_match($patterns_cache['chrome_version'], $userAgent, $matches)) {
+        if ($required_tokens < 2) $penalty_score += 30;
+
+        if (str_contains($lowerUA, 'chrome') && preg_match($patterns['chrome_version'], $userAgent, $matches)) {
             $version = (int)$matches[1];
-            if ($version < 100 || $version > 130) {
-                $penalty_score += 25;
-            }
-            
-            if ($version >= 120) {
-                $human_score += 8;
-            }
+            if ($version < 100 || $version > 130) $penalty_score += 25;
+            if ($version >= 120) $human_score += 8;
         }
-        
+
         $os_patterns = ['windows', 'macintosh', 'linux', 'android', 'iphone', 'ipad'];
         $has_os = false;
-        
         foreach ($os_patterns as $os) {
             if (str_contains($lowerUA, $os)) {
                 $has_os = true;
@@ -389,32 +349,6 @@ class CR_Redirector {
                 break;
             }
         }
-        
-        if (!$has_os) {
-            $penalty_score += 20;
-        }
-
-        if (preg_match($patterns_cache['suspicious'], $userAgent)) {
-            $write_log(true, 'Suspicious pattern');
-            return true;
-        }
-
-        $final_score = $human_score - $penalty_score;
-        $threshold = $has_browser_signature ? 60 : 90;
-        
-        $write_log(null, "Score calculation: Human={$human_score}, Penalty={$penalty_score}, Final={$final_score}, Threshold={$threshold}", $final_score);
-        
-        if ($final_score < $threshold) {
-            $write_log(true, 'Failed score threshold', $final_score);
-            return true;
-        }
-        
-        if ($has_browser_signature && $final_score < 80) {
-            $write_log(true, 'Low score despite browser signature', $final_score);
-            return true;
-        }
-        
-        $write_log(false, 'Verified human', $final_score);
-        return false;
+        if (!$has_os) $penalty_score += 20;
     }
 }
