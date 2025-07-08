@@ -5,7 +5,7 @@ class CR_Redirector {
     public static function init() {
         add_action('init', [self::class, 'add_rewrite_rules']);
         add_filter('query_vars', [self::class, 'add_query_vars']);
-        add_action('parse_request', [self::class, 'process_redirect_performant'], 999);
+        add_action('parse_request', [self::class, 'process_redirect_performant'], 10, 1);
     }
 
     public static function add_rewrite_rules() {
@@ -17,15 +17,12 @@ class CR_Redirector {
         return $vars;
     }
 
-    public static function process_redirect_performant() {
-        $redirect_prefix = '/go/';
-        $request_uri = $_SERVER['REQUEST_URI'] ?? '';
-        if (strpos($request_uri, $redirect_prefix) !== 0) {
+    public static function process_redirect_performant($wp) {
+        if (!isset($wp->query_vars['redirect_slug'])) {
             return;
         }
 
-        $request_path = strtok($request_uri, '?');
-        $slug = basename($request_path);
+        $slug = $wp->query_vars['redirect_slug'];
 
         if (empty($slug) || strlen($slug) > 255) {
             return;
@@ -87,7 +84,7 @@ class CR_Redirector {
             header('Location: ' . $final_redirect_url, true, 307);
         }
 
-        if ($track_this_click && !(defined('DOING_CRON') && DOING_CRON)) {
+        if ($track_this_click && !(defined('DOING_CRON') && DOING_CRON) && !self::is_bot()) {
             self::track_click_async($link_data->ID);
         }
 
