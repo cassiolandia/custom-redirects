@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Redirecionador Customizado com Rastreamento
  * Description:       Cria URLs personalizadas no formato /go/[slug] que redirecionam para um destino e rastreiam os cliques diários, com detecção de bots.
- * Version:           2.0.0
+ * Version:           2.1.0
  * Author:            Seu Nome (Revisado por Especialista)
  */
 
@@ -13,6 +13,7 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-cr-activator.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-cr-cpt.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-cr-admin.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-cr-redirector.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-cr-campaign-reports.php';
 
 // Ativação do Plugin
 register_activation_hook(__FILE__, ['CR_Activator', 'activate']);
@@ -21,3 +22,4 @@ register_activation_hook(__FILE__, ['CR_Activator', 'activate']);
 CR_CPT::init();
 CR_Admin::init();
 CR_Redirector::init();
+CR_Campaign_Reports::init();

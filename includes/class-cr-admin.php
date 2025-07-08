@@ -18,6 +18,7 @@ class CR_Admin {
         add_filter('post_row_actions', [self::class, 'add_reset_clicks_link'], 10, 2);
         add_action('admin_init', [self::class, 'handle_reset_clicks_action']);
         add_action('admin_notices', [self::class, 'show_reset_success_notice']);
+        add_filter('cr_campaign_row_actions', ['CR_Campaign_Reports', 'add_report_link'], 10, 2);
     }
 
     public static function admin_custom_styles() {
