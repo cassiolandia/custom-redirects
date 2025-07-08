@@ -39,51 +39,185 @@ class CR_Campaign_Reports {
         }
 
         global $wpdb;
-        $total_clicks = 0;
-
-        $post_ids = get_posts([
-            'post_type' => 'redirect_link',
-            'posts_per_page' => -1,
-            'fields' => 'ids',
-            'tax_query' => [
-                [
-                    'taxonomy' => 'cr_campaign',
-                    'field' => 'term_id',
-                    'terms' => $campaign_id,
-                ],
-            ],
-        ]);
-
-        if (!empty($post_ids)) {
-            $clicks_table = $wpdb->prefix . 'redirect_clicks';
-            $post_ids_placeholder = implode(', ', array_fill(0, count($post_ids), '%d'));
-            
-            $sql = $wpdb->prepare(
-                "SELECT SUM(click_count) FROM {$clicks_table} WHERE link_id IN ({$post_ids_placeholder})",
-                $post_ids
-            );
-            
-            $total_clicks = $wpdb->get_var($sql);
-        }
+        $clicks_by_origin = self::get_clicks_by_origin_for_campaign($campaign_id);
+        $total_clicks = array_sum(wp_list_pluck($clicks_by_origin, 'total_clicks'));
+        
+        $daily_clicks = self::get_daily_clicks_for_campaign($campaign_id);
+        $pivoted_data = self::pivot_daily_data($daily_clicks);
+        $origins = array_keys(reset($pivoted_data) ? reset($pivoted_data) : []);
 
         ?>
         <div class="wrap">
             <h1>Relatório para a Campanha: <?php echo esc_html($term->name); ?></h1>
-            <p><a href="<?php echo esc_url(admin_url('edit-tags.php?taxonomy=cr_campaign')); ?>">← Voltar para todas as campanhas</a></p>
+            <p><a href="<?php echo esc_url(admin_url('edit-tags.php?taxonomy=cr_campaign&post_type=redirect_link')); ?>">← Voltar para todas as campanhas</a></p>
             
             <div id="poststuff">
                 <div class="postbox">
                     <div class="postbox-header"><h2>Resumo de Acessos</h2></div>
                     <div class="inside">
                         <p style="font-size: 1.5em;">
-                            <strong>Total de acessos:</strong>
+                            <strong>Total de acessos (humanos):</strong>
                             <?php echo number_format_i18n($total_clicks ?? 0); ?>
                         </p>
+                    </div>
+                </div>
+
+                <div class="postbox">
+                    <div class="postbox-header"><h2>Detalhes por Origem</h2></div>
+                    <div class="inside">
+                        <table class="wp-list-table widefat fixed striped">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Origem</th>
+                                    <th scope="col">Total de Acessos</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (!empty($clicks_by_origin)) : ?>
+                                    <?php foreach ($clicks_by_origin as $origin_data) : ?>
+                                        <tr>
+                                            <td><?php echo esc_html($origin_data->origin_name); ?></td>
+                                            <td><?php echo number_format_i18n($origin_data->total_clicks); ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php else : ?>
+                                    <tr>
+                                        <td colspan="2">Nenhum acesso registrado para esta campanha ainda.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="postbox">
+                    <div class="postbox-header"><h2>Relatório Diário por Origem</h2></div>
+                    <div class="inside">
+                        <table class="wp-list-table widefat fixed striped">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Dia</th>
+                                    <?php foreach ($origins as $origin_name) : ?>
+                                        <th scope="col"><?php echo esc_html($origin_name); ?></th>
+                                    <?php endforeach; ?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (!empty($pivoted_data)) : ?>
+                                    <?php foreach ($pivoted_data as $date => $origins_data) : ?>
+                                        <tr>
+                                            <td><?php echo date_i18n('d/m/Y', strtotime($date)); ?></td>
+                                            <?php foreach ($origins as $origin_name) : ?>
+                                                <td><?php echo number_format_i18n($origins_data[$origin_name] ?? 0); ?></td>
+                                            <?php endforeach; ?>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php else : ?>
+                                    <tr>
+                                        <td colspan="<?php echo count($origins) + 1; ?>">Nenhum acesso diário registrado.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
 
         </div>
         <?php
+    }
+
+    private static function get_daily_clicks_for_campaign($campaign_id) {
+        global $wpdb;
+
+        $clicks_table = $wpdb->prefix . 'redirect_clicks';
+        $term_relationships_table = $wpdb->prefix . 'term_relationships';
+        $term_taxonomy_table = $wpdb->prefix . 'term_taxonomy';
+        $terms_table = $wpdb->prefix . 'terms';
+
+        $sql = $wpdb->prepare(
+            "SELECT
+                rc.click_date,
+                t.name AS origin_name,
+                SUM(rc.click_count) AS daily_clicks
+            FROM
+                {$clicks_table} AS rc
+            INNER JOIN
+                {$term_relationships_table} AS tr_campaign ON rc.link_id = tr_campaign.object_id
+            INNER JOIN
+                {$term_relationships_table} AS tr_origin ON rc.link_id = tr_origin.object_id
+            INNER JOIN
+                {$term_taxonomy_table} AS tt ON tr_origin.term_taxonomy_id = tt.term_taxonomy_id
+            INNER JOIN
+                {$terms_table} AS t ON tt.term_id = t.term_id
+            WHERE
+                tr_campaign.term_taxonomy_id = %d
+                AND tt.taxonomy = 'cr_origin'
+            GROUP BY
+                rc.click_date, t.term_id
+            ORDER BY
+                rc.click_date DESC, daily_clicks DESC",
+            $campaign_id
+        );
+
+        return $wpdb->get_results($sql);
+    }
+
+    private static function pivot_daily_data($daily_clicks) {
+        $pivoted_data = [];
+        $all_origins = [];
+
+        // First, get all unique origins
+        foreach ($daily_clicks as $click) {
+            if (!in_array($click->origin_name, $all_origins)) {
+                $all_origins[] = $click->origin_name;
+            }
+        }
+
+        // Now, pivot the data
+        foreach ($daily_clicks as $click) {
+            $date = $click->click_date;
+            if (!isset($pivoted_data[$date])) {
+                $pivoted_data[$date] = array_fill_keys($all_origins, 0);
+            }
+            $pivoted_data[$date][$click->origin_name] = $click->daily_clicks;
+        }
+
+        return $pivoted_data;
+    }
+
+    private static function get_clicks_by_origin_for_campaign($campaign_id) {
+        global $wpdb;
+
+        $clicks_table = $wpdb->prefix . 'redirect_clicks';
+        $term_relationships_table = $wpdb->prefix . 'term_relationships';
+        $term_taxonomy_table = $wpdb->prefix . 'term_taxonomy';
+        $terms_table = $wpdb->prefix . 'terms';
+
+        $sql = $wpdb->prepare(
+            "SELECT
+                t.name AS origin_name,
+                SUM(rc.click_count) AS total_clicks
+            FROM
+                {$clicks_table} AS rc
+            INNER JOIN
+                {$term_relationships_table} AS tr_campaign ON rc.link_id = tr_campaign.object_id
+            INNER JOIN
+                {$term_relationships_table} AS tr_origin ON rc.link_id = tr_origin.object_id
+            INNER JOIN
+                {$term_taxonomy_table} AS tt ON tr_origin.term_taxonomy_id = tt.term_taxonomy_id
+            INNER JOIN
+                {$terms_table} AS t ON tt.term_id = t.term_id
+            WHERE
+                tr_campaign.term_taxonomy_id = %d
+                AND tt.taxonomy = 'cr_origin'
+            GROUP BY
+                t.term_id
+            ORDER BY
+                total_clicks DESC",
+            $campaign_id
+        );
+
+        return $wpdb->get_results($sql);
     }
 }
