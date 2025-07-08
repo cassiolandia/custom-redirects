@@ -18,7 +18,15 @@ class CR_Admin {
         add_filter('post_row_actions', [self::class, 'add_reset_clicks_link'], 10, 2);
         add_action('admin_init', [self::class, 'handle_reset_clicks_action']);
         add_action('admin_notices', [self::class, 'show_reset_success_notice']);
-        add_filter('cr_campaign_row_actions', ['CR_Campaign_Reports', 'add_report_link'], 10, 2);
+        add_filter('redirect_post_location', [self::class, 'redirect_after_publish'], 10, 2);
+    }
+
+    public static function redirect_after_publish($location, $post_id) {
+        // Check if it's our custom post type and if the 'publish' or 'save' button was clicked
+        if (get_post_type($post_id) == 'redirect_link' && (isset($_POST['publish']) || isset($_POST['save']))) {
+            $location = admin_url('edit.php?post_type=redirect_link');
+        }
+        return $location;
     }
 
     public static function admin_custom_styles() {
@@ -317,6 +325,15 @@ class CR_Admin {
     public static function modify_admin_query($query) {
         if (!is_admin() || !$query->is_main_query() || $query->get('post_type') !== 'redirect_link') {
             return;
+        }
+
+        // Default to active links if no status filter is set
+        if (!isset($_GET['redirect_status']) || empty($_GET['redirect_status'])) {
+            $meta_query = $query->get('meta_query') ?: [];
+            $meta_query['relation'] = 'OR';
+            $meta_query[] = ['key' => '_is_inactive', 'compare' => 'NOT EXISTS'];
+            $meta_query[] = ['key' => '_is_inactive', 'value' => '0', 'compare' => '='];
+            $query->set('meta_query', $meta_query);
         }
 
         if ($query->get('orderby') === 'status') {
